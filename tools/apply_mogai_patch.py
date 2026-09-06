@@ -21,8 +21,7 @@ my $mogai_seq = 0;
     changed = True
 
 # ---------------------------------------------------------------------------
-# 2. Parser.
-# IMPORTANT: {{墨:注}} must be recognized BEFORE punctuation conversion.
+# 2. Parser. {{墨:注}} must be recognized BEFORE punctuation conversion.
 # ---------------------------------------------------------------------------
 old_parser = """        # 墨蓋：{{墨:X}} -> 单个私用区标记；因此段末补空格计算仍按一个字位处理。
         s/\\{\\{墨:([^{}])\\}\\}/
@@ -55,106 +54,104 @@ if new_parser not in s:
 
 # ---------------------------------------------------------------------------
 # 3. Configurable 墨蓋 geometry.
-# Ratios are relative to one standard body-text cell.  Defaults intentionally
-# leave white space around the black block and move it slightly downward.
+# The black block is inset within one standard body-text cell.  Glyph centering
+# is metric-based, so text y-shift now defaults to zero; it remains available
+# only as an optional optical nudge from book.cfg.
 # ---------------------------------------------------------------------------
-geometry_cfg = """#墨蓋版式微调：比例以一个正文标准字位的宽高为基准
+old_cfg = """#墨蓋版式微调：比例以一个正文标准字位的宽高为基准
 my $mogai_box_width_ratio  = (defined $book{'mogai_box_width_ratio'}  and $book{'mogai_box_width_ratio'} ne '')  ? $book{'mogai_box_width_ratio'}  : 0.72;
 my $mogai_box_height_ratio = (defined $book{'mogai_box_height_ratio'} and $book{'mogai_box_height_ratio'} ne '') ? $book{'mogai_box_height_ratio'} : 0.84;
 my $mogai_box_y_shift      = (defined $book{'mogai_box_y_shift'}      and $book{'mogai_box_y_shift'} ne '')      ? $book{'mogai_box_y_shift'}      : -0.04;
 my $mogai_text_y_shift     = (defined $book{'mogai_text_y_shift'}     and $book{'mogai_text_y_shift'} ne '')     ? $book{'mogai_text_y_shift'}     : -0.04;
 my $mogai_font_scale       = (defined $book{'mogai_font_scale'}       and $book{'mogai_font_scale'} ne '')       ? $book{'mogai_font_scale'}       : 0.95;
 """
-if "my $mogai_box_width_ratio" not in s:
+new_cfg = """#墨蓋版式微调：比例以一个正文标准字位的宽高为基准
+my $mogai_box_width_ratio  = (defined $book{'mogai_box_width_ratio'}  and $book{'mogai_box_width_ratio'} ne '')  ? $book{'mogai_box_width_ratio'}  : 0.72;
+my $mogai_box_height_ratio = (defined $book{'mogai_box_height_ratio'} and $book{'mogai_box_height_ratio'} ne '') ? $book{'mogai_box_height_ratio'} : 0.84;
+my $mogai_box_y_shift      = (defined $book{'mogai_box_y_shift'}      and $book{'mogai_box_y_shift'} ne '')      ? $book{'mogai_box_y_shift'}      : -0.04;
+my $mogai_text_y_shift     = (defined $book{'mogai_text_y_shift'}     and $book{'mogai_text_y_shift'} ne '')     ? $book{'mogai_text_y_shift'}     : 0.0;
+my $mogai_font_scale       = (defined $book{'mogai_font_scale'}       and $book{'mogai_font_scale'} ne '')       ? $book{'mogai_font_scale'}       : 0.95;
+"""
+if old_cfg in s:
+    s = s.replace(old_cfg, new_cfg, 1)
+    changed = True
+elif "my $mogai_box_width_ratio" not in s:
     anchor = "my $fallback_bold_stroke_width = $book{'fallback_bold_stroke_width'} || 1.0;\n"
     if anchor not in s:
         raise SystemExit("mogai geometry config anchor not found")
-    s = s.replace(anchor, anchor + "\n" + geometry_cfg, 1)
+    s = s.replace(anchor, anchor + "\n" + new_cfg, 1)
     changed = True
 
 # ---------------------------------------------------------------------------
-# 4. Renderer: black ground + white glyph, consuming exactly one $pcnt.
-#    The box is centered horizontally inside the cell, vertically referenced to
-#    the actual cell bottom (pos_y includes row_delta_y), then nudged downward.
+# 4. Glyph-bbox helper.  PDF text coordinates use the glyph baseline, so merely
+# centering the em square is not visually central.  Center the actual ink bbox.
 # ---------------------------------------------------------------------------
-old_renderer = """        # 墨蓋：白纸印刷用黑底白字反白效果。
-        if(ord($char) >= 0xE000 and ord($char) <= 0xF8FF and exists $mogai_map{$char}) {
-            $pcnt++ if($pcnt < $page_chars_num);
-            if($pcnt <= $page_chars_num) {
-                my $mchar = $mogai_map{$char};
-                my $fn = get_font($mchar, \\@tfns);
-                if(not $fn) { $mchar = '□'; $fn = get_font($mchar, \\@tfns); }
-                my $fsize = $fonts{$fn}->[0];
-                $fsize *= $font_scale{$fn} if $if_font_metric_adjust;
-                my ($bx, $by) = @{$pos_l[$pcnt]};
+bbox_helper = r'''# get_glyph_bbox — 获取指定字号下字形的实际墨迹包围盒，用于墨蓋反白字精确居中
+#   返回 xmin, ymin, xmax, ymax；单位与 PDF 字号在 72dpi 下对应
+sub get_glyph_bbox {
+    my ($font_file, $char, $size) = @_;
 
-                my $mgfx = $vpage->gfx();
-                $mgfx->fillcolor('black');
-                $mgfx->rect($bx, $by, $cw, $rh);
-                $mgfx->fill();
+    my $face;
+    if ($face_cache{$font_file}) {
+        $face = $face_cache{$font_file};
+    } else {
+        my $freetype = Font::FreeType->new();
+        $face = $freetype->face("fonts/$font_file");
+        $face_cache{$font_file} = $face;
+    }
 
-                my $tx = $bx + ($cw-$fsize)/2;
-                my $ty = $by;
-                my $deg = $fonts{$fn}->[2];
-                $vpage->text()->textlabel($tx, $ty, $vfonts{$fn}, $fsize, $mchar,
-                    -rotate => $deg, -color => 'white');
-                @last = @{$pos_l[$pcnt]};
-                $last_char = $mchar;
-            }
-            goto RCHARS if($pcnt == $page_chars_num);
-            next;
-        }
-"""
+    $face->set_char_size($size, $size, 72, 72);
+    my $glyph = $face->glyph_from_char($char);
+    return unless $glyph;
+    my ($xmin, $ymin, $xmax, $ymax) = $glyph->outline_bbox();
+    return unless defined $xmin and defined $ymin and defined $xmax and defined $ymax;
+    return ($xmin, $ymin, $xmax, $ymax);
+}
 
-new_renderer = """        # 墨蓋：白纸印刷用黑底白字反白效果。黑框不填满整字位，四周留白并略向下移。
-        if(ord($char) >= 0xE000 and ord($char) <= 0xF8FF and exists $mogai_map{$char}) {
-            $pcnt++ if($pcnt < $page_chars_num);
-            if($pcnt <= $page_chars_num) {
-                my $mchar = $mogai_map{$char};
-                my $fn = get_font($mchar, \\@tfns);
-                if(not $fn) { $mchar = '□'; $fn = get_font($mchar, \\@tfns); }
-                my $fsize = $fonts{$fn}->[0];
-                $fsize *= $font_scale{$fn} if $if_font_metric_adjust;
-                my ($bx, $by) = @{$pos_l[$pcnt]};
+'''
+if "sub get_glyph_bbox" not in s:
+    anchor = "# get_glyph_height — 获取字体中参考字符的字形高度（已缩放至参考尺寸）\n"
+    if anchor not in s:
+        raise SystemExit("glyph bbox helper anchor not found")
+    s = s.replace(anchor, bbox_helper + anchor, 1)
+    changed = True
 
-                # @pos_l 的 y 已包含 row_delta_y，因此先还原标准字位的真正下沿。
-                my $box_w = $cw * $mogai_box_width_ratio;
-                my $box_h = $rh * $mogai_box_height_ratio;
-                my $box_x = $bx + ($cw - $box_w)/2;
-                my $cell_bottom = $by - $row_delta_y;
-                my $box_y = $cell_bottom + ($rh - $box_h)/2 + $rh*$mogai_box_y_shift;
-
-                my $mgfx = $vpage->gfx();
-                $mgfx->fillcolor('black');
-                $mgfx->rect($box_x, $box_y, $box_w, $box_h);
-                $mgfx->fill();
-
-                my $mfsize = $fsize * $mogai_font_scale;
+# ---------------------------------------------------------------------------
+# 5. Renderer: one $pcnt, inset black box, white glyph centered by actual bbox.
+# ---------------------------------------------------------------------------
+old_center = """                my $mfsize = $fsize * $mogai_font_scale;
                 my $tx = $box_x + ($box_w-$mfsize)/2;
                 my $ty = $by + $rh*$mogai_text_y_shift;
                 my $deg = $fonts{$fn}->[2];
                 $vpage->text()->textlabel($tx, $ty, $vfonts{$fn}, $mfsize, $mchar,
                     -rotate => $deg, -color => 'white');
-                @last = @{$pos_l[$pcnt]};
-                $last_char = $mchar;
-            }
-            goto RCHARS if($pcnt == $page_chars_num);
-            next;
-        }
 """
-
-if old_renderer in s:
-    s = s.replace(old_renderer, new_renderer, 1)
+new_center = """                my $mfsize = $fsize * $mogai_font_scale;
+                my $deg = $fonts{$fn}->[2];
+                my ($tx, $ty);
+                my ($gxmin, $gymin, $gxmax, $gymax) = get_glyph_bbox($fn, $mchar, $mfsize);
+                if(defined $gxmin and $deg == 0) {
+                    my $glyph_w = $gxmax - $gxmin;
+                    my $glyph_h = $gymax - $gymin;
+                    # 文字的实际墨迹边界，而不是 em 方框，正好落在黑框中心。
+                    $tx = $box_x + ($box_w - $glyph_w)/2 - $gxmin;
+                    $ty = $box_y + ($box_h - $glyph_h)/2 - $gymin + $rh*$mogai_text_y_shift;
+                } else {
+                    # 极少数旋转字体/无 bbox 情况的保守回退。
+                    $tx = $box_x + ($box_w-$mfsize)/2;
+                    $ty = $box_y + ($box_h-$mfsize)/2 + $rh*$mogai_text_y_shift;
+                }
+                $vpage->text()->textlabel($tx, $ty, $vfonts{$fn}, $mfsize, $mchar,
+                    -rotate => $deg, -color => 'white');
+"""
+if old_center in s:
+    s = s.replace(old_center, new_center, 1)
     changed = True
-elif "my $box_w = $cw * $mogai_box_width_ratio;" not in s:
-    old = """        my $char = shift @chars;\n        #特殊符号标识\n"""
-    if old not in s:
-        raise SystemExit("renderer anchor not found")
-    s = s.replace(old, "        my $char = shift @chars;\n\n" + new_renderer + "\n        #特殊符号标识\n", 1)
-    changed = True
+elif "my ($gxmin, $gymin, $gxmax, $gymax) = get_glyph_bbox" not in s:
+    raise SystemExit("mogai centering anchor not found")
 
 if changed:
     p.write_text(s, encoding="utf-8")
-    print("patched/repaired vrain.pl 墨蓋 support (inset geometry)")
+    print("patched/repaired vrain.pl 墨蓋 support (metric-centered glyph)")
 else:
-    print("vrain.pl already contains repaired 墨蓋 support (inset geometry)")
+    print("vrain.pl already contains metric-centered 墨蓋 support")
