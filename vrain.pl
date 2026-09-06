@@ -131,6 +131,13 @@ my $if_font_metric_adjust = $book{'if_font_metric_adjust'} || 0;
 my $if_fallback_bold = $book{'if_fallback_bold'} || 0;
 my $fallback_bold_stroke_width = $book{'fallback_bold_stroke_width'} || 1.0;
 
+#墨蓋版式微调：比例以一个正文标准字位的宽高为基准
+my $mogai_box_width_ratio  = (defined $book{'mogai_box_width_ratio'}  and $book{'mogai_box_width_ratio'} ne '')  ? $book{'mogai_box_width_ratio'}  : 0.72;
+my $mogai_box_height_ratio = (defined $book{'mogai_box_height_ratio'} and $book{'mogai_box_height_ratio'} ne '') ? $book{'mogai_box_height_ratio'} : 0.84;
+my $mogai_box_y_shift      = (defined $book{'mogai_box_y_shift'}      and $book{'mogai_box_y_shift'} ne '')      ? $book{'mogai_box_y_shift'}      : -0.04;
+my $mogai_text_y_shift     = (defined $book{'mogai_text_y_shift'}     and $book{'mogai_text_y_shift'} ne '')     ? $book{'mogai_text_y_shift'}     : -0.04;
+my $mogai_font_scale       = (defined $book{'mogai_font_scale'}       and $book{'mogai_font_scale'} ne '')       ? $book{'mogai_font_scale'}       : 0.95;
+
 if(not $canvas_id) { print "错误：未定义背景图ID 'canvas_id'！\n"; exit; }
 if(not -f "canvas/$canvas_id.cfg") { print "错误：未发现背景图cfg配置文件！\n"; exit; }
 if(not -f "canvas/$canvas_id.jpg") { print "错误：未发现背景图jpg图片文件！\n"; exit; }
@@ -721,7 +728,7 @@ foreach my $tid ($from..$to) {
         if(not scalar @chars) { goto RCHARS; }
         my $char = shift @chars;
 
-        # 墨蓋：白纸印刷用黑底白字反白效果。
+        # 墨蓋：白纸印刷用黑底白字反白效果。黑框不填满整字位，四周留白并略向下移。
         if(ord($char) >= 0xE000 and ord($char) <= 0xF8FF and exists $mogai_map{$char}) {
             $pcnt++ if($pcnt < $page_chars_num);
             if($pcnt <= $page_chars_num) {
@@ -732,15 +739,23 @@ foreach my $tid ($from..$to) {
                 $fsize *= $font_scale{$fn} if $if_font_metric_adjust;
                 my ($bx, $by) = @{$pos_l[$pcnt]};
 
+                # @pos_l 的 y 已包含 row_delta_y，因此先还原标准字位的真正下沿。
+                my $box_w = $cw * $mogai_box_width_ratio;
+                my $box_h = $rh * $mogai_box_height_ratio;
+                my $box_x = $bx + ($cw - $box_w)/2;
+                my $cell_bottom = $by - $row_delta_y;
+                my $box_y = $cell_bottom + ($rh - $box_h)/2 + $rh*$mogai_box_y_shift;
+
                 my $mgfx = $vpage->gfx();
                 $mgfx->fillcolor('black');
-                $mgfx->rect($bx, $by, $cw, $rh);
+                $mgfx->rect($box_x, $box_y, $box_w, $box_h);
                 $mgfx->fill();
 
-                my $tx = $bx + ($cw-$fsize)/2;
-                my $ty = $by;
+                my $mfsize = $fsize * $mogai_font_scale;
+                my $tx = $box_x + ($box_w-$mfsize)/2;
+                my $ty = $by + $rh*$mogai_text_y_shift;
                 my $deg = $fonts{$fn}->[2];
-                $vpage->text()->textlabel($tx, $ty, $vfonts{$fn}, $fsize, $mchar,
+                $vpage->text()->textlabel($tx, $ty, $vfonts{$fn}, $mfsize, $mchar,
                     -rotate => $deg, -color => 'white');
                 @last = @{$pos_l[$pcnt]};
                 $last_char = $mchar;
