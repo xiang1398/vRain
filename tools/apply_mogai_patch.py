@@ -4,6 +4,17 @@ from pathlib import Path
 p = Path("vrain.pl")
 s = p.read_text(encoding="utf-8")
 
+# The feature branch commits the generated vrain.pl.  Subsequent CI runs must
+# therefore accept an already-patched file instead of trying to patch it twice.
+if (
+    "my %mogai_map;" in s
+    and "my $mogai_seq = 0;" in s
+    and "exists $mogai_map{$char}" in s
+    and "$mgfx->fillcolor('black');" in s
+):
+    print("vrain.pl already contains 墨蓋 support")
+    raise SystemExit(0)
+
 old = "my @dats = ('');\n"
 new = """my @dats = ('');
 # 墨蓋内部标记表。每个标记本身只占一个正文标准字位。
