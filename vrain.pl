@@ -137,6 +137,8 @@ my $mogai_box_height_ratio = (defined $book{'mogai_box_height_ratio'} and $book{
 my $mogai_box_y_shift      = (defined $book{'mogai_box_y_shift'}      and $book{'mogai_box_y_shift'} ne '')      ? $book{'mogai_box_y_shift'}      : -0.04;
 my $mogai_text_y_shift     = (defined $book{'mogai_text_y_shift'}     and $book{'mogai_text_y_shift'} ne '')     ? $book{'mogai_text_y_shift'}     : 0.0;
 my $mogai_font_scale       = (defined $book{'mogai_font_scale'}       and $book{'mogai_font_scale'} ne '')       ? $book{'mogai_font_scale'}       : 0.95;
+# 实际字形最多占黑框多少比例；自动缩小可保证任何墨蓋字都不会越出本字位。
+my $mogai_glyph_fill_ratio = (defined $book{'mogai_glyph_fill_ratio'} and $book{'mogai_glyph_fill_ratio'} ne '') ? $book{'mogai_glyph_fill_ratio'} : 0.78;
 
 if(not $canvas_id) { print "错误：未定义背景图ID 'canvas_id'！\n"; exit; }
 if(not -f "canvas/$canvas_id.cfg") { print "错误：未发现背景图cfg配置文件！\n"; exit; }
@@ -758,11 +760,27 @@ foreach my $tid ($from..$to) {
                 if(defined $gxmin and $deg == 0) {
                     my $glyph_w = $gxmax - $gxmin;
                     my $glyph_h = $gymax - $gymin;
-                    # 文字的实际墨迹边界，而不是 em 方框，正好落在黑框中心。
+
+                    # 字形若过大则先按实际墨迹边界等比缩小，使其始终留在自己的墨蓋框内。
+                    my $max_w = $box_w * $mogai_glyph_fill_ratio;
+                    my $max_h = $box_h * $mogai_glyph_fill_ratio;
+                    my $fit = 1.0;
+                    $fit = $max_w/$glyph_w if($glyph_w > $max_w and $max_w/$glyph_w < $fit);
+                    $fit = $max_h/$glyph_h if($glyph_h > $max_h and $max_h/$glyph_h < $fit);
+                    if($fit < 1.0) {
+                        $mfsize *= $fit;
+                        ($gxmin, $gymin, $gxmax, $gymax) = get_glyph_bbox($fn, $mchar, $mfsize);
+                        $glyph_w = $gxmax - $gxmin;
+                        $glyph_h = $gymax - $gymin;
+                    }
+
+                    # 文字的实际墨迹边界中心 = 黑框中心。
                     $tx = $box_x + ($box_w - $glyph_w)/2 - $gxmin;
                     $ty = $box_y + ($box_h - $glyph_h)/2 - $gymin + $rh*$mogai_text_y_shift;
                 } else {
-                    # 极少数旋转字体/无 bbox 情况的保守回退。
+                    # 极少数旋转字体/无 bbox 情况也限制在黑框尺寸内。
+                    my $max_em = (($box_w < $box_h) ? $box_w : $box_h) * $mogai_glyph_fill_ratio;
+                    $mfsize = $max_em if($mfsize > $max_em);
                     $tx = $box_x + ($box_w-$mfsize)/2;
                     $ty = $box_y + ($box_h-$mfsize)/2 + $rh*$mogai_text_y_shift;
                 }
