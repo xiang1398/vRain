@@ -135,7 +135,7 @@ my $fallback_bold_stroke_width = $book{'fallback_bold_stroke_width'} || 1.0;
 my $mogai_box_width_ratio  = (defined $book{'mogai_box_width_ratio'}  and $book{'mogai_box_width_ratio'} ne '')  ? $book{'mogai_box_width_ratio'}  : 0.72;
 my $mogai_box_height_ratio = (defined $book{'mogai_box_height_ratio'} and $book{'mogai_box_height_ratio'} ne '') ? $book{'mogai_box_height_ratio'} : 0.84;
 my $mogai_box_y_shift      = (defined $book{'mogai_box_y_shift'}      and $book{'mogai_box_y_shift'} ne '')      ? $book{'mogai_box_y_shift'}      : -0.04;
-my $mogai_text_y_shift     = (defined $book{'mogai_text_y_shift'}     and $book{'mogai_text_y_shift'} ne '')     ? $book{'mogai_text_y_shift'}     : -0.04;
+my $mogai_text_y_shift     = (defined $book{'mogai_text_y_shift'}     and $book{'mogai_text_y_shift'} ne '')     ? $book{'mogai_text_y_shift'}     : 0.0;
 my $mogai_font_scale       = (defined $book{'mogai_font_scale'}       and $book{'mogai_font_scale'} ne '')       ? $book{'mogai_font_scale'}       : 0.95;
 
 if(not $canvas_id) { print "错误：未定义背景图ID 'canvas_id'！\n"; exit; }
@@ -752,9 +752,20 @@ foreach my $tid ($from..$to) {
                 $mgfx->fill();
 
                 my $mfsize = $fsize * $mogai_font_scale;
-                my $tx = $box_x + ($box_w-$mfsize)/2;
-                my $ty = $by + $rh*$mogai_text_y_shift;
                 my $deg = $fonts{$fn}->[2];
+                my ($tx, $ty);
+                my ($gxmin, $gymin, $gxmax, $gymax) = get_glyph_bbox($fn, $mchar, $mfsize);
+                if(defined $gxmin and $deg == 0) {
+                    my $glyph_w = $gxmax - $gxmin;
+                    my $glyph_h = $gymax - $gymin;
+                    # 文字的实际墨迹边界，而不是 em 方框，正好落在黑框中心。
+                    $tx = $box_x + ($box_w - $glyph_w)/2 - $gxmin;
+                    $ty = $box_y + ($box_h - $glyph_h)/2 - $gymin + $rh*$mogai_text_y_shift;
+                } else {
+                    # 极少数旋转字体/无 bbox 情况的保守回退。
+                    $tx = $box_x + ($box_w-$mfsize)/2;
+                    $ty = $box_y + ($box_h-$mfsize)/2 + $rh*$mogai_text_y_shift;
+                }
                 $vpage->text()->textlabel($tx, $ty, $vfonts{$fn}, $mfsize, $mchar,
                     -rotate => $deg, -color => 'white');
                 @last = @{$pos_l[$pcnt]};
@@ -1213,6 +1224,28 @@ sub get_pid_zh {
 }
 
 #字体度量微调：获取字体中参考字符的字形高度
+# get_glyph_bbox — 获取指定字号下字形的实际墨迹包围盒，用于墨蓋反白字精确居中
+#   返回 xmin, ymin, xmax, ymax；单位与 PDF 字号在 72dpi 下对应
+sub get_glyph_bbox {
+    my ($font_file, $char, $size) = @_;
+
+    my $face;
+    if ($face_cache{$font_file}) {
+        $face = $face_cache{$font_file};
+    } else {
+        my $freetype = Font::FreeType->new();
+        $face = $freetype->face("fonts/$font_file");
+        $face_cache{$font_file} = $face;
+    }
+
+    $face->set_char_size($size, $size, 72, 72);
+    my $glyph = $face->glyph_from_char($char);
+    return unless $glyph;
+    my ($xmin, $ymin, $xmax, $ymax) = $glyph->outline_bbox();
+    return unless defined $xmin and defined $ymin and defined $xmax and defined $ymax;
+    return ($xmin, $ymin, $xmax, $ymax);
+}
+
 # get_glyph_height — 获取字体中参考字符的字形高度（已缩放至参考尺寸）
 #   若 glyph 不存在则返回 undef，交由 compute_font_scales 的 face 级回退处理
 #   参数：字体文件名, 字符, 参考尺寸(pt)
