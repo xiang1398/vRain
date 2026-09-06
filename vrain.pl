@@ -322,6 +322,9 @@ my @achars = split //, $author;
 my $page_chars_num = ($if_multirows and $multirows_num != 1) ? $col_num*$row_num*$multirows_num : $col_num*$row_num; #重要常量：每页字符计数器
 my ($if_text000, $if_text999) = (0, 0); #是否存在用于保存前言及序的000.txt文件
 my @dats = ('');
+# 墨蓋内部标记表。每个标记本身只占一个正文标准字位。
+my %mogai_map;
+my $mogai_seq = 0;
 # ============================================================================
 # 读取源文本文件
 # ============================================================================
@@ -369,6 +372,13 @@ foreach my $tfn (sort readdir(TDIR)) {
             s/^。//;
         }
         s/\@/ /g; #@代表空格
+
+        # 墨蓋：{{墨:X}} -> 单个私用区标记；因此段末补空格计算仍按一个字位处理。
+        s/\{\{墨:([^{}])\}\}/
+            my $key = chr(0xE000 + ($mogai_seq++ % 0x1900));
+            $mogai_map{$key} = $1;
+            $key;
+        /gex;
 
     	my $tmpstr = $_; #保存基础处理后原始文本
     	my $rnum = 0; #标注文本双排占用长度
@@ -708,6 +718,35 @@ foreach my $tid ($from..$to) {
         #正文文字打印
         if(not scalar @chars) { goto RCHARS; }
         my $char = shift @chars;
+
+        # 墨蓋：白纸印刷用黑底白字反白效果。
+        if(ord($char) >= 0xE000 and ord($char) <= 0xF8FF and exists $mogai_map{$char}) {
+            $pcnt++ if($pcnt < $page_chars_num);
+            if($pcnt <= $page_chars_num) {
+                my $mchar = $mogai_map{$char};
+                my $fn = get_font($mchar, \@tfns);
+                if(not $fn) { $mchar = '□'; $fn = get_font($mchar, \@tfns); }
+                my $fsize = $fonts{$fn}->[0];
+                $fsize *= $font_scale{$fn} if $if_font_metric_adjust;
+                my ($bx, $by) = @{$pos_l[$pcnt]};
+
+                my $mgfx = $vpage->gfx();
+                $mgfx->fillcolor('black');
+                $mgfx->rect($bx, $by, $cw, $rh);
+                $mgfx->fill();
+
+                my $tx = $bx + ($cw-$fsize)/2;
+                my $ty = $by;
+                my $deg = $fonts{$fn}->[2];
+                $vpage->text()->textlabel($tx, $ty, $vfonts{$fn}, $fsize, $mchar,
+                    -rotate => $deg, -color => 'white');
+                @last = @{$pos_l[$pcnt]};
+                $last_char = $mchar;
+            }
+            goto RCHARS if($pcnt == $page_chars_num);
+            next;
+        }
+
         #特殊符号标识
     	if($char eq '$') { #前进半页或整页
     		shift @chars for(1..$row_num-1); #跳过$后补齐列高的空格
