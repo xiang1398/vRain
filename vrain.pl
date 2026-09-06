@@ -346,6 +346,15 @@ foreach my $tfn (sort readdir(TDIR)) {
         next if(/^\s{0,}$/);
         s/\s//g;
         $_ = decode('utf-8', $_);
+        # 墨蓋：必须先于标点替换处理，否则 ':' 会被 book.cfg 改写。
+        # 同时接受 ASCII 冒号和全角冒号，输入 {{墨:注}} / {{墨：注}} 均可。
+        s/\{\{墨[:：]([^{}])\}\}/
+            die "墨蓋标记过多（私用区已用尽）\n" if $mogai_seq >= 0x1900;
+            my $key = chr(0xE000 + $mogai_seq++);
+            $mogai_map{$key} = $1;
+            $key;
+        /gex;
+
         #标点符号替换
         if($exp_replace_comma) {
             foreach my $kv (split /\|/, $exp_replace_comma) {
@@ -372,13 +381,6 @@ foreach my $tfn (sort readdir(TDIR)) {
             s/^。//;
         }
         s/\@/ /g; #@代表空格
-
-        # 墨蓋：{{墨:X}} -> 单个私用区标记；因此段末补空格计算仍按一个字位处理。
-        s/\{\{墨:([^{}])\}\}/
-            my $key = chr(0xE000 + ($mogai_seq++ % 0x1900));
-            $mogai_map{$key} = $1;
-            $key;
-        /gex;
 
     	my $tmpstr = $_; #保存基础处理后原始文本
     	my $rnum = 0; #标注文本双排占用长度
