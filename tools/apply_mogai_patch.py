@@ -54,15 +54,12 @@ if new_parser not in s:
 
 # ---------------------------------------------------------------------------
 # 3. Configurable 墨蓋 geometry.
-# The black block is inset within one standard body-text cell.  Glyph centering
-# is metric-based, so text y-shift now defaults to zero; it remains available
-# only as an optional optical nudge from book.cfg.
 # ---------------------------------------------------------------------------
 old_cfg = """#墨蓋版式微调：比例以一个正文标准字位的宽高为基准
 my $mogai_box_width_ratio  = (defined $book{'mogai_box_width_ratio'}  and $book{'mogai_box_width_ratio'} ne '')  ? $book{'mogai_box_width_ratio'}  : 0.72;
 my $mogai_box_height_ratio = (defined $book{'mogai_box_height_ratio'} and $book{'mogai_box_height_ratio'} ne '') ? $book{'mogai_box_height_ratio'} : 0.84;
 my $mogai_box_y_shift      = (defined $book{'mogai_box_y_shift'}      and $book{'mogai_box_y_shift'} ne '')      ? $book{'mogai_box_y_shift'}      : -0.04;
-my $mogai_text_y_shift     = (defined $book{'mogai_text_y_shift'}     and $book{'mogai_text_y_shift'} ne '')     ? $book{'mogai_text_y_shift'}     : -0.04;
+my $mogai_text_y_shift     = (defined $book{'mogai_text_y_shift'}     and $book{'mogai_text_y_shift'} ne '')     ? $book{'mogai_text_y_shift'}     : 0.0;
 my $mogai_font_scale       = (defined $book{'mogai_font_scale'}       and $book{'mogai_font_scale'} ne '')       ? $book{'mogai_font_scale'}       : 0.95;
 """
 new_cfg = """#墨蓋版式微调：比例以一个正文标准字位的宽高为基准
@@ -71,6 +68,8 @@ my $mogai_box_height_ratio = (defined $book{'mogai_box_height_ratio'} and $book{
 my $mogai_box_y_shift      = (defined $book{'mogai_box_y_shift'}      and $book{'mogai_box_y_shift'} ne '')      ? $book{'mogai_box_y_shift'}      : -0.04;
 my $mogai_text_y_shift     = (defined $book{'mogai_text_y_shift'}     and $book{'mogai_text_y_shift'} ne '')     ? $book{'mogai_text_y_shift'}     : 0.0;
 my $mogai_font_scale       = (defined $book{'mogai_font_scale'}       and $book{'mogai_font_scale'} ne '')       ? $book{'mogai_font_scale'}       : 0.95;
+# 实际字形最多占黑框多少比例；自动缩小可保证任何墨蓋字都不会越出本字位。
+my $mogai_glyph_fill_ratio = (defined $book{'mogai_glyph_fill_ratio'} and $book{'mogai_glyph_fill_ratio'} ne '') ? $book{'mogai_glyph_fill_ratio'} : 0.78;
 """
 if old_cfg in s:
     s = s.replace(old_cfg, new_cfg, 1)
@@ -81,10 +80,17 @@ elif "my $mogai_box_width_ratio" not in s:
         raise SystemExit("mogai geometry config anchor not found")
     s = s.replace(anchor, anchor + "\n" + new_cfg, 1)
     changed = True
+elif "my $mogai_glyph_fill_ratio" not in s:
+    anchor = "my $mogai_font_scale       = (defined $book{'mogai_font_scale'}       and $book{'mogai_font_scale'} ne '')       ? $book{'mogai_font_scale'}       : 0.95;\n"
+    if anchor not in s:
+        raise SystemExit("mogai glyph fill config anchor not found")
+    addition = "# 实际字形最多占黑框多少比例；自动缩小可保证任何墨蓋字都不会越出本字位。\nmy $mogai_glyph_fill_ratio = (defined $book{'mogai_glyph_fill_ratio'} and $book{'mogai_glyph_fill_ratio'} ne '') ? $book{'mogai_glyph_fill_ratio'} : 0.78;\n"
+    s = s.replace(anchor, anchor + addition, 1)
+    changed = True
 
 # ---------------------------------------------------------------------------
-# 4. Glyph-bbox helper.  PDF text coordinates use the glyph baseline, so merely
-# centering the em square is not visually central.  Center the actual ink bbox.
+# 4. Glyph-bbox helper. PDF text coordinates use the glyph baseline, so center
+# the actual ink bbox rather than the em square.
 # ---------------------------------------------------------------------------
 bbox_helper = r'''# get_glyph_bbox — 获取指定字号下字形的实际墨迹包围盒，用于墨蓋反白字精确居中
 #   返回 xmin, ymin, xmax, ymax；单位与 PDF 字号在 72dpi 下对应
@@ -120,13 +126,6 @@ if "sub get_glyph_bbox" not in s:
 # 5. Renderer: one $pcnt, inset black box, white glyph centered by actual bbox.
 # ---------------------------------------------------------------------------
 old_center = """                my $mfsize = $fsize * $mogai_font_scale;
-                my $tx = $box_x + ($box_w-$mfsize)/2;
-                my $ty = $by + $rh*$mogai_text_y_shift;
-                my $deg = $fonts{$fn}->[2];
-                $vpage->text()->textlabel($tx, $ty, $vfonts{$fn}, $mfsize, $mchar,
-                    -rotate => $deg, -color => 'white');
-"""
-new_center = """                my $mfsize = $fsize * $mogai_font_scale;
                 my $deg = $fonts{$fn}->[2];
                 my ($tx, $ty);
                 my ($gxmin, $gymin, $gxmax, $gymax) = get_glyph_bbox($fn, $mchar, $mfsize);
@@ -144,14 +143,48 @@ new_center = """                my $mfsize = $fsize * $mogai_font_scale;
                 $vpage->text()->textlabel($tx, $ty, $vfonts{$fn}, $mfsize, $mchar,
                     -rotate => $deg, -color => 'white');
 """
+new_center = """                my $mfsize = $fsize * $mogai_font_scale;
+                my $deg = $fonts{$fn}->[2];
+                my ($tx, $ty);
+                my ($gxmin, $gymin, $gxmax, $gymax) = get_glyph_bbox($fn, $mchar, $mfsize);
+                if(defined $gxmin and $deg == 0) {
+                    my $glyph_w = $gxmax - $gxmin;
+                    my $glyph_h = $gymax - $gymin;
+
+                    # 字形若过大则先按实际墨迹边界等比缩小，使其始终留在自己的墨蓋框内。
+                    my $max_w = $box_w * $mogai_glyph_fill_ratio;
+                    my $max_h = $box_h * $mogai_glyph_fill_ratio;
+                    my $fit = 1.0;
+                    $fit = $max_w/$glyph_w if($glyph_w > $max_w and $max_w/$glyph_w < $fit);
+                    $fit = $max_h/$glyph_h if($glyph_h > $max_h and $max_h/$glyph_h < $fit);
+                    if($fit < 1.0) {
+                        $mfsize *= $fit;
+                        ($gxmin, $gymin, $gxmax, $gymax) = get_glyph_bbox($fn, $mchar, $mfsize);
+                        $glyph_w = $gxmax - $gxmin;
+                        $glyph_h = $gymax - $gymin;
+                    }
+
+                    # 文字的实际墨迹边界中心 = 黑框中心。
+                    $tx = $box_x + ($box_w - $glyph_w)/2 - $gxmin;
+                    $ty = $box_y + ($box_h - $glyph_h)/2 - $gymin + $rh*$mogai_text_y_shift;
+                } else {
+                    # 极少数旋转字体/无 bbox 情况也限制在黑框尺寸内。
+                    my $max_em = (($box_w < $box_h) ? $box_w : $box_h) * $mogai_glyph_fill_ratio;
+                    $mfsize = $max_em if($mfsize > $max_em);
+                    $tx = $box_x + ($box_w-$mfsize)/2;
+                    $ty = $box_y + ($box_h-$mfsize)/2 + $rh*$mogai_text_y_shift;
+                }
+                $vpage->text()->textlabel($tx, $ty, $vfonts{$fn}, $mfsize, $mchar,
+                    -rotate => $deg, -color => 'white');
+"""
 if old_center in s:
     s = s.replace(old_center, new_center, 1)
     changed = True
-elif "my ($gxmin, $gymin, $gxmax, $gymax) = get_glyph_bbox" not in s:
-    raise SystemExit("mogai centering anchor not found")
+elif "my $max_w = $box_w * $mogai_glyph_fill_ratio;" not in s:
+    raise SystemExit("mogai fit-to-box anchor not found")
 
 if changed:
     p.write_text(s, encoding="utf-8")
-    print("patched/repaired vrain.pl 墨蓋 support (metric-centered glyph)")
+    print("patched/repaired vrain.pl 墨蓋 support (centered and constrained)")
 else:
-    print("vrain.pl already contains metric-centered 墨蓋 support")
+    print("vrain.pl already contains centered, constrained 墨蓋 support")
