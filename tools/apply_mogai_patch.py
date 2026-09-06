@@ -23,8 +23,6 @@ my $mogai_seq = 0;
 # ---------------------------------------------------------------------------
 # 2. Parser.
 # IMPORTANT: {{墨:注}} must be recognized BEFORE punctuation conversion.
-# book.cfg commonly converts ':' -> '：' and then '：' -> '。'; parsing after
-# that stage produced the literal blue '{ 墨。注 }' seen in test PDFs.
 # ---------------------------------------------------------------------------
 old_parser = """        # 墨蓋：{{墨:X}} -> 单个私用区标记；因此段末补空格计算仍按一个字位处理。
         s/\\{\\{墨:([^{}])\\}\\}/
@@ -56,13 +54,30 @@ if new_parser not in s:
     changed = True
 
 # ---------------------------------------------------------------------------
-# 3. Renderer: black ground + white glyph, consuming exactly one $pcnt.
+# 3. Configurable 墨蓋 geometry.
+# Ratios are relative to one standard body-text cell.  Defaults intentionally
+# leave white space around the black block and move it slightly downward.
 # ---------------------------------------------------------------------------
-if "exists $mogai_map{$char}" not in s:
-    old = """        my $char = shift @chars;\n        #特殊符号标识\n"""
-    new = """        my $char = shift @chars;
+geometry_cfg = """#墨蓋版式微调：比例以一个正文标准字位的宽高为基准
+my $mogai_box_width_ratio  = (defined $book{'mogai_box_width_ratio'}  and $book{'mogai_box_width_ratio'} ne '')  ? $book{'mogai_box_width_ratio'}  : 0.72;
+my $mogai_box_height_ratio = (defined $book{'mogai_box_height_ratio'} and $book{'mogai_box_height_ratio'} ne '') ? $book{'mogai_box_height_ratio'} : 0.84;
+my $mogai_box_y_shift      = (defined $book{'mogai_box_y_shift'}      and $book{'mogai_box_y_shift'} ne '')      ? $book{'mogai_box_y_shift'}      : -0.04;
+my $mogai_text_y_shift     = (defined $book{'mogai_text_y_shift'}     and $book{'mogai_text_y_shift'} ne '')     ? $book{'mogai_text_y_shift'}     : -0.04;
+my $mogai_font_scale       = (defined $book{'mogai_font_scale'}       and $book{'mogai_font_scale'} ne '')       ? $book{'mogai_font_scale'}       : 0.95;
+"""
+if "my $mogai_box_width_ratio" not in s:
+    anchor = "my $fallback_bold_stroke_width = $book{'fallback_bold_stroke_width'} || 1.0;\n"
+    if anchor not in s:
+        raise SystemExit("mogai geometry config anchor not found")
+    s = s.replace(anchor, anchor + "\n" + geometry_cfg, 1)
+    changed = True
 
-        # 墨蓋：白纸印刷用黑底白字反白效果。
+# ---------------------------------------------------------------------------
+# 4. Renderer: black ground + white glyph, consuming exactly one $pcnt.
+#    The box is centered horizontally inside the cell, vertically referenced to
+#    the actual cell bottom (pos_y includes row_delta_y), then nudged downward.
+# ---------------------------------------------------------------------------
+old_renderer = """        # 墨蓋：白纸印刷用黑底白字反白效果。
         if(ord($char) >= 0xE000 and ord($char) <= 0xF8FF and exists $mogai_map{$char}) {
             $pcnt++ if($pcnt < $page_chars_num);
             if($pcnt <= $page_chars_num) {
@@ -89,16 +104,57 @@ if "exists $mogai_map{$char}" not in s:
             goto RCHARS if($pcnt == $page_chars_num);
             next;
         }
-
-        #特殊符号标识
 """
+
+new_renderer = """        # 墨蓋：白纸印刷用黑底白字反白效果。黑框不填满整字位，四周留白并略向下移。
+        if(ord($char) >= 0xE000 and ord($char) <= 0xF8FF and exists $mogai_map{$char}) {
+            $pcnt++ if($pcnt < $page_chars_num);
+            if($pcnt <= $page_chars_num) {
+                my $mchar = $mogai_map{$char};
+                my $fn = get_font($mchar, \\@tfns);
+                if(not $fn) { $mchar = '□'; $fn = get_font($mchar, \\@tfns); }
+                my $fsize = $fonts{$fn}->[0];
+                $fsize *= $font_scale{$fn} if $if_font_metric_adjust;
+                my ($bx, $by) = @{$pos_l[$pcnt]};
+
+                # @pos_l 的 y 已包含 row_delta_y，因此先还原标准字位的真正下沿。
+                my $box_w = $cw * $mogai_box_width_ratio;
+                my $box_h = $rh * $mogai_box_height_ratio;
+                my $box_x = $bx + ($cw - $box_w)/2;
+                my $cell_bottom = $by - $row_delta_y;
+                my $box_y = $cell_bottom + ($rh - $box_h)/2 + $rh*$mogai_box_y_shift;
+
+                my $mgfx = $vpage->gfx();
+                $mgfx->fillcolor('black');
+                $mgfx->rect($box_x, $box_y, $box_w, $box_h);
+                $mgfx->fill();
+
+                my $mfsize = $fsize * $mogai_font_scale;
+                my $tx = $box_x + ($box_w-$mfsize)/2;
+                my $ty = $by + $rh*$mogai_text_y_shift;
+                my $deg = $fonts{$fn}->[2];
+                $vpage->text()->textlabel($tx, $ty, $vfonts{$fn}, $mfsize, $mchar,
+                    -rotate => $deg, -color => 'white');
+                @last = @{$pos_l[$pcnt]};
+                $last_char = $mchar;
+            }
+            goto RCHARS if($pcnt == $page_chars_num);
+            next;
+        }
+"""
+
+if old_renderer in s:
+    s = s.replace(old_renderer, new_renderer, 1)
+    changed = True
+elif "my $box_w = $cw * $mogai_box_width_ratio;" not in s:
+    old = """        my $char = shift @chars;\n        #特殊符号标识\n"""
     if old not in s:
         raise SystemExit("renderer anchor not found")
-    s = s.replace(old, new, 1)
+    s = s.replace(old, "        my $char = shift @chars;\n\n" + new_renderer + "\n        #特殊符号标识\n", 1)
     changed = True
 
 if changed:
     p.write_text(s, encoding="utf-8")
-    print("patched/repaired vrain.pl 墨蓋 support")
+    print("patched/repaired vrain.pl 墨蓋 support (inset geometry)")
 else:
-    print("vrain.pl already contains repaired 墨蓋 support")
+    print("vrain.pl already contains repaired 墨蓋 support (inset geometry)")
