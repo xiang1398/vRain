@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 import urllib.parse
 import urllib.request
@@ -34,6 +33,7 @@ USER_AGENT = "vRain-mogai-converter/0.1 (personal scholarly typesetting)"
 
 # Deliberately keep ○/〇 because they are structural markers inside 疏.
 EDITORIAL_PUNCT = str.maketrans("", "", "，。；：！？、,.!?;:「」『』“”‘’《》〈〉﹁﹂﹃﹄　 \t\r\n")
+VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
 
 
 class ParagraphExtractor(HTMLParser):
@@ -51,22 +51,28 @@ class ParagraphExtractor(HTMLParser):
             self.in_p = True
             self.depth = 1
             self.buf = []
-        elif self.in_p:
-            self.depth += 1
-        if self.in_p and tag == "br":
+            return
+        if not self.in_p:
+            return
+        if tag == "br":
             self.buf.append("\n")
+            return
+        if tag not in VOID_TAGS:
+            self.depth += 1
 
     def handle_endtag(self, tag: str) -> None:
         if not self.in_p:
             return
-        self.depth -= 1
-        if tag == "p" and self.depth <= 0:
+        if tag == "p":
             text = "".join(self.buf).strip()
             if text:
                 self.paragraphs.append(text)
             self.in_p = False
             self.depth = 0
             self.buf = []
+            return
+        if tag not in VOID_TAGS and self.depth > 1:
+            self.depth -= 1
 
     def handle_data(self, data: str) -> None:
         if self.in_p:
