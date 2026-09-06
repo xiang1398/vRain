@@ -3,46 +3,64 @@ from pathlib import Path
 
 p = Path("vrain.pl")
 s = p.read_text(encoding="utf-8")
+changed = False
 
-# The feature branch commits the generated vrain.pl.  Subsequent CI runs must
-# therefore accept an already-patched file instead of trying to patch it twice.
-if (
-    "my %mogai_map;" in s
-    and "my $mogai_seq = 0;" in s
-    and "exists $mogai_map{$char}" in s
-    and "$mgfx->fillcolor('black');" in s
-):
-    print("vrain.pl already contains 墨蓋 support")
-    raise SystemExit(0)
-
-old = "my @dats = ('');\n"
-new = """my @dats = ('');
+# ---------------------------------------------------------------------------
+# 1. Global map: one private-use token == one normal body-text position.
+# ---------------------------------------------------------------------------
+if "my %mogai_map;" not in s:
+    old = "my @dats = ('');\n"
+    new = """my @dats = ('');
 # 墨蓋内部标记表。每个标记本身只占一个正文标准字位。
 my %mogai_map;
 my $mogai_seq = 0;
 """
-if old not in s:
-    raise SystemExit("global anchor not found")
-s = s.replace(old, new, 1)
+    if old not in s:
+        raise SystemExit("global anchor not found")
+    s = s.replace(old, new, 1)
+    changed = True
 
-old = """        s/\\@/ /g; #@代表空格\n\n    \tmy $tmpstr = $_; #保存基础处理后原始文本\n"""
-new = """        s/\\@/ /g; #@代表空格
-
-        # 墨蓋：{{墨:X}} -> 单个私用区标记；因此段末补空格计算仍按一个字位处理。
+# ---------------------------------------------------------------------------
+# 2. Parser.
+# IMPORTANT: {{墨:注}} must be recognized BEFORE punctuation conversion.
+# book.cfg commonly converts ':' -> '：' and then '：' -> '。'; parsing after
+# that stage produced the literal blue '{ 墨。注 }' seen in test PDFs.
+# ---------------------------------------------------------------------------
+old_parser = """        # 墨蓋：{{墨:X}} -> 单个私用区标记；因此段末补空格计算仍按一个字位处理。
         s/\\{\\{墨:([^{}])\\}\\}/
             my $key = chr(0xE000 + ($mogai_seq++ % 0x1900));
             $mogai_map{$key} = $1;
             $key;
         /gex;
 
-    \tmy $tmpstr = $_; #保存基础处理后原始文本
 """
-if old not in s:
-    raise SystemExit("parser anchor not found")
-s = s.replace(old, new, 1)
+if old_parser in s:
+    s = s.replace(old_parser, "", 1)
+    changed = True
 
-old = """        my $char = shift @chars;\n        #特殊符号标识\n"""
-new = """        my $char = shift @chars;
+new_parser = """        # 墨蓋：必须先于标点替换处理，否则 ':' 会被 book.cfg 改写。
+        # 同时接受 ASCII 冒号和全角冒号，输入 {{墨:注}} / {{墨：注}} 均可。
+        s/\\{\\{墨[:：]([^{}])\\}\\}/
+            die "墨蓋标记过多（私用区已用尽）\\n" if $mogai_seq >= 0x1900;
+            my $key = chr(0xE000 + $mogai_seq++);
+            $mogai_map{$key} = $1;
+            $key;
+        /gex;
+
+"""
+parser_anchor = "        $_ = decode('utf-8', $_);\n"
+if new_parser not in s:
+    if parser_anchor not in s:
+        raise SystemExit("decode/parser anchor not found")
+    s = s.replace(parser_anchor, parser_anchor + new_parser, 1)
+    changed = True
+
+# ---------------------------------------------------------------------------
+# 3. Renderer: black ground + white glyph, consuming exactly one $pcnt.
+# ---------------------------------------------------------------------------
+if "exists $mogai_map{$char}" not in s:
+    old = """        my $char = shift @chars;\n        #特殊符号标识\n"""
+    new = """        my $char = shift @chars;
 
         # 墨蓋：白纸印刷用黑底白字反白效果。
         if(ord($char) >= 0xE000 and ord($char) <= 0xF8FF and exists $mogai_map{$char}) {
@@ -74,9 +92,13 @@ new = """        my $char = shift @chars;
 
         #特殊符号标识
 """
-if old not in s:
-    raise SystemExit("renderer anchor not found")
-s = s.replace(old, new, 1)
+    if old not in s:
+        raise SystemExit("renderer anchor not found")
+    s = s.replace(old, new, 1)
+    changed = True
 
-p.write_text(s, encoding="utf-8")
-print("patched vrain.pl with 墨蓋 support")
+if changed:
+    p.write_text(s, encoding="utf-8")
+    print("patched/repaired vrain.pl 墨蓋 support")
+else:
+    print("vrain.pl already contains repaired 墨蓋 support")
