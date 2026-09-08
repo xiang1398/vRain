@@ -1,4 +1,4 @@
-name: Apply title number Y-shift patch
+name: Remove title number Y-shift patch
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
       - feature/mogai-applied
     paths:
       - .github/workflows/apply-title-number-yshift.yml
+      - tools/apply_title_number_yshift_patch.py
   workflow_dispatch:
 
 permissions:
@@ -26,19 +27,19 @@ jobs:
           git fetch origin feature/mogai-applied
           git rebase origin/feature/mogai-applied
 
-      - name: Apply patch
+      - name: Remove patch
         run: python3 tools/apply_title_number_yshift_patch.py
 
-      - name: Commit patched vrain.pl
+      - name: Commit restored vrain.pl
         run: |
           if git diff --quiet -- vrain.pl; then
-            echo "vrain.pl already patched"
+            echo "vrain.pl already restored"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add vrain.pl
-          git commit -m "Shift chapter numbers upward in page-center title"
+          git commit -m "Remove chapter-number Y-shift patch"
 
           for attempt in 1 2 3 4 5; do
             git fetch origin feature/mogai-applied
@@ -48,5 +49,5 @@ jobs:
             fi
             sleep 5
           done
-          echo "Failed to push patched vrain.pl after retries"
+          echo "Failed to push restored vrain.pl after retries"
           exit 1
