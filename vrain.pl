@@ -143,6 +143,8 @@ my $mogai_glyph_fill_ratio = (defined $book{'mogai_glyph_fill_ratio'} and $book{
 my $mogai_glyph_fill_ratio = (defined $book{'mogai_glyph_fill_ratio'} and $book{'mogai_glyph_fill_ratio'} ne '') ? $book{'mogai_glyph_fill_ratio'} : 0.78;
 # 实际字形最多占黑框多少比例；自动缩小可保证任何墨蓋字都不会越出本字位。
 my $mogai_glyph_fill_ratio = (defined $book{'mogai_glyph_fill_ratio'} and $book{'mogai_glyph_fill_ratio'} ne '') ? $book{'mogai_glyph_fill_ratio'} : 0.78;
+# 实际字形最多占黑框多少比例；自动缩小可保证任何墨蓋字都不会越出本字位。
+my $mogai_glyph_fill_ratio = (defined $book{'mogai_glyph_fill_ratio'} and $book{'mogai_glyph_fill_ratio'} ne '') ? $book{'mogai_glyph_fill_ratio'} : 0.78;
 
 if(not $canvas_id) { print "错误：未定义背景图ID 'canvas_id'！\n"; exit; }
 if(not -f "canvas/$canvas_id.cfg") { print "错误：未发现背景图cfg配置文件！\n"; exit; }
