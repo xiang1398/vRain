@@ -189,7 +189,6 @@ my $cover_font_color = $book{'cover_font_color'};
 #版心标题、页码的字体、位置
 my ($title_postfix, $title_directory) = ($book{'title_postfix'}, $book{'title_directory'});
 my ($title_font_size, $title_font_color, $title_y, $title_ydis) = ($book{'title_font_size'}, $book{'title_font_color'}, $book{'title_y'}, $book{'title_ydis'});
-my $title_number_y_shift = (defined $book{'title_number_y_shift'} and $book{'title_number_y_shift'} ne '') ? $book{'title_number_y_shift'} : 80; # 章次数字单独上移，正值向上
 my ($pager_font_size, $pager_font_color, $pager_y) = ($book{'pager_font_size'}, $book{'pager_font_color'}, $book{'pager_y'});
 #标点符号替代规则
 my ($exp_replace_comma, $exp_replace_number) = ($book{'exp_replace_comma'}, $book{'exp_replace_number'});
@@ -549,18 +548,10 @@ foreach my $tid ($from..$to) {
     my @rchars = (); #保存标注文本字符；因标注文本可能跨页，故设置为全局变量，创建新页后优先处理上页遗留的标注文字
     my (@tpchars, @last, $tptitle, $tcnt, $last_char, $tbcnt, $rbcnt); #标题字符数组，上一个字符坐标，标题，正文圆角框字符计数器，上一个字符（用于圆角框补齐）
 
-    my ($title_number_start, $title_number_len) = (-1, 0); # 章次数字在版心标题数组中的范围
     if(defined $title_postfix) {
         my $cid = ($if_text000 == 1) ? $tid-1 : $tid;
         my $tpost = $title_postfix;
-        my $chapter_num = $zhnums{$cid};
-        if($cid != 0 and not ($if_text999 == 1 and $tid == $#dats)) {
-            my $post_prefix = $title_postfix;
-            $post_prefix =~ s/X.*$//; # X 之前的固定文字（如“卷”）不移动
-            $title_number_start = scalar(split //, $title.$post_prefix);
-            $title_number_len = scalar(split //, $chapter_num);
-        }
-        $tpost =~ s/X/$chapter_num/; #替换为卷章回数字
+        $tpost =~ s/X/$zhnums{$cid}/; #替换为卷章回数字
         $tpost = '序' if($cid == 0);	
         $tpost = '附' if($if_text999 == 1 and $tid == $#dats);		
         @tpchars = split //, $title.$tpost;
@@ -583,7 +574,6 @@ foreach my $tid ($from..$to) {
         my $fn = get_font($tpchars[$i], \@tfns);
             $fs *= $font_scale{$fn} if $if_font_metric_adjust;
         my ($fx, $fy) = ($canvas_width/2-$fs/2, $title_y-$fs*$i*$title_ydis);
-        $fy += $title_number_y_shift if($title_number_start >= 0 and $i >= $title_number_start and $i < $title_number_start+$title_number_len);
         $vpage->text->textlabel($fx, $fy, $vfonts{$fn}, $fs, $tpchars[$i], -color => $title_font_color) if($lc_width > 0);
     }
     #标注文本采用双排后，每页、每列文字数是变化的，页数、列数不能提前确定，需逐个字符处理，直至全部字符处理完，期间指针到达整页时创新新页
@@ -612,7 +602,6 @@ foreach my $tid ($from..$to) {
                 my $fn = get_font($tpchars[$i], \@tfns);
                 $fs *= $font_scale{$fn} if $if_font_metric_adjust;
                 my ($fx, $fy) = ($canvas_width/2-$fs/2, $title_y-$fs*$i*$title_ydis);
-        $fy += $title_number_y_shift if($title_number_start >= 0 and $i >= $title_number_start and $i < $title_number_start+$title_number_len);
                 $vpage->text->textlabel($fx, $fy, $vfonts{$fn}, $fs, $tpchars[$i], -color => $title_font_color) if($lc_width > 0);
             }
         }
